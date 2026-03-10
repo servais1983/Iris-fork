@@ -1,0 +1,20 @@
+Metadata-Version: 2.1
+Name: iris-vt-module
+Version: 1.2.1
+Summary: An interface module for VT and DFIR-IRIS
+Home-page: https://github.com/dfir-iris/iris-client
+Author: DFIR-IRIS
+Author-email: contact@dfir-iris.org
+License: UNKNOWN
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: LGPLv3
+Classifier: Operating System :: OS Independent
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+Requires-Dist: virustotal-api (==1.1.11)
+Requires-Dist: setuptools
+Requires-Dist: pyunpack
+
+An interface module for VT and DFIR-IRIS
+

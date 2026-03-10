@@ -41,9 +41,14 @@
                     <span class="menu-title">Evidence</span>
                 </a>
             </li>
+            {% if mitre_module_active %}
+            <li class="nav-item">
+                <a class="nav-link" href="/case/mitre?cid={{session['current_case'].case_id}}">
+                    <span class="menu-title">MITRE ATT&amp;CK</span>
+                </a>
+            </li>
+            {% endif %}
               </ul>
           </div>
 </nav>
-
-
 

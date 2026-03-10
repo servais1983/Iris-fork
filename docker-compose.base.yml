@@ -20,6 +20,8 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: iriswebapp_rabbitmq
     restart: always
+    volumes:
+      - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/iris.conf:ro
     networks:
       - iris_backend
 

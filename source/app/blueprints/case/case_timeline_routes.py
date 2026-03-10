@@ -599,7 +599,7 @@ def case_filter_timeline(caseid):
         ras['event_date'] = ras['event_date'].strftime('%Y-%m-%dT%H:%M:%S.%f')
         ras['event_date_wtz'] = ras['event_date_wtz'].strftime('%Y-%m-%dT%H:%M:%S.%f') if ras[
             'event_date_wtz'] else None
-        ras['event_added'] = ras['event_added'].strftime('%Y-%m-%dT%H:%M:%S')
+        ras['event_added'] = ras['event_added'].strftime('%Y-%m-%dT%H:%M:%S') if ras['event_added'] else None
 
         if row.event_id not in events_list:
             events_list.append(row.event_id)

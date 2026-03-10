@@ -48,6 +48,26 @@ from app.models.authorization import User
 from app.schema.marshables import CaseDetailsSchema, CommentSchema, CaseNoteSchema, IocSchema
 
 
+def export_case_mitre_json(case_id):
+    """Export all MITRE ATT&CK techniques linked to a case."""
+    from app.models.mitre import CaseMitreAssociation
+    rows = CaseMitreAssociation.query.filter_by(case_id=case_id).all()
+    result = []
+    for r in rows:
+        t = r.technique
+        result.append({
+            'mitre_id': t.mitre_id,
+            'name': t.name,
+            'description': t.description or '',
+            'tactics': [tac.name for tac in t.tactics],
+            'is_subtechnique': t.is_subtechnique,
+            'parent_mitre_id': t.parent.mitre_id if t.parent else None,
+            'url': 'https://attack.mitre.org/techniques/' + t.mitre_id.replace('.', '/'),
+            'note': r.note or '',
+        })
+    return result
+
+
 def export_case_json(case_id):
     """
     Fully export a case a JSON
@@ -66,6 +86,7 @@ def export_case_json(case_id):
     export['timeline'] = export_case_tm_json(case_id)
     export['iocs'] = export_case_iocs_json(case_id)
     export['assets'] = export_case_assets_json(case_id)
+    export['ttps'] = export_case_mitre_json(case_id)
     export['tasks'] = export_case_tasks_json(case_id)
     export['comments'] = export_case_comments_json(case_id)
     export['notes'] = export_case_notes_json(case_id)
@@ -92,6 +113,7 @@ def export_case_json_for_report(case_id):
     export['timeline'] = export_case_tm_json(case_id)
     export['iocs'] = export_case_iocs_json(case_id)
     export['assets'] = export_case_assets_json(case_id)
+    export['ttps'] = export_case_mitre_json(case_id)
     export['tasks'] = export_case_tasks_json(case_id)
     export['notes'] = export_case_notes_json(case_id)
     export['comments'] = export_case_comments_json(case_id)

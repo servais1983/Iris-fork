@@ -25,6 +25,7 @@
 # CONTENT ------------------------------------------------
 import logging as log
 import os
+import uuid
 from datetime import datetime
 
 import jinja2
@@ -55,6 +56,324 @@ from app.iris_engine.reporter.ImageHandler import ImageHandler
 
 LOG_FORMAT = '%(asctime)s :: %(levelname)s :: %(module)s :: %(funcName)s :: %(message)s'
 log.basicConfig(level=log.INFO, format=LOG_FORMAT)
+
+
+def _inject_timeline_image_into_docx(docx_path, image_path):
+    """
+    Post-processes the generated DOCX to insert the visual timeline PNG
+    after the TIMELINE section heading, using python-docx directly.
+    This bypasses the autoescape issue with docxtpl's addPicture.
+    """
+    try:
+        from docx import Document
+        from docx.shared import Inches, Pt
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+        import copy
+
+        doc = Document(docx_path)
+
+        # Find the paragraph/table that corresponds to the TIMELINE annex
+        # Strategy: look for the last table in the document (the timeline table)
+        # and insert the image paragraph right after it.
+        tables = doc.tables
+        if not tables:
+            return
+
+        # Find the timeline table — it's the one with 'Date' / 'Event' columns
+        # Fall back to the last table in the document
+        timeline_table = None
+        for tbl in tables:
+            if tbl.rows:
+                header_texts = ' '.join(
+                    cell.text.strip().lower() for cell in tbl.rows[0].cells
+                )
+                if 'date' in header_texts and ('event' in header_texts or 'timeline' in header_texts):
+                    timeline_table = tbl
+                    break
+        if timeline_table is None:
+            timeline_table = tables[-1]
+
+        # Insert a new paragraph after the table using raw XML manipulation
+        tbl_element = timeline_table._tbl
+        tbl_parent = tbl_element.getparent()
+
+        # Create a new paragraph with centered alignment
+        new_para = OxmlElement('w:p')
+        pPr = OxmlElement('w:pPr')
+        jc = OxmlElement('w:jc')
+        jc.set(qn('w:val'), 'center')
+        pPr.append(jc)
+        new_para.append(pPr)
+
+        # Add a run with the picture to the new paragraph
+        run_elem = OxmlElement('w:r')
+        new_para.append(run_elem)
+
+        # Insert the paragraph after the table in the XML tree
+        tbl_element.addnext(new_para)
+
+        # Now use python-docx to add the picture to that run by finding the
+        # new paragraph in doc.paragraphs and using add_run().add_picture()
+        # Find the new paragraph object by its XML element
+        para_obj = None
+        for p in doc.paragraphs:
+            if p._p is new_para:
+                para_obj = p
+                break
+
+        if para_obj is None:
+            # Fallback: append to document body
+            para_obj = doc.add_paragraph()
+            para_obj.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Get available page width minus margins
+        section = doc.sections[0]
+        page_w = section.page_width - section.left_margin - section.right_margin
+
+        run_obj = para_obj.add_run()
+        pic = run_obj.add_picture(image_path)
+        # Scale to full page width
+        if pic.width > page_w:
+            ratio = pic.height / pic.width
+            pic.width = page_w
+            pic.height = int(ratio * page_w)
+        para_obj.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        doc.save(docx_path)
+        log.info('Timeline image injected into report: %s', docx_path)
+
+    except Exception as exc:
+        log.warning('Failed to inject timeline image into DOCX: %s', exc)
+
+
+def _generate_timeline_image(timeline_events, output_dir):
+    """
+    Generates a visual timeline PNG image from case events using Pillow.
+    Design: card-based with colored left accent bars, day-group badges and a
+    connecting spine — mirroring the IRIS web UI timeline style.
+    Returns the path to the generated image, or None on error / no events.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        from collections import OrderedDict
+
+        FONT_BOLD = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+        FONT      = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+
+        # ── layout ────────────────────────────────────────────────────────
+        W        = 1800
+        HEADER_H = 78
+        FOOTER_H = 46
+        SPINE_X  = 72          # absolute X of the vertical spine
+        CARD_X   = SPINE_X + 46
+        CARD_W   = W - CARD_X - 40
+        ACCENT_W = 8           # colored left edge of card
+        CARD_PAD = 20          # vertical gap between cards
+        BADGE_H  = 42
+        BADGE_MB = 18
+        DOT_R    = 11          # radius of spine dot
+        TEXT_PAD = ACCENT_W + 22
+        MAX_CONTENT_LINES = 3
+        LINE_H_CONTENT    = 23
+
+        # ── colors ────────────────────────────────────────────────────────
+        C_BG      = '#f5f6fa'
+        C_CARD    = '#ffffff'
+        C_BORDER  = '#dee2e6'
+        C_SHADOW  = '#cdd1d9'
+        C_HEADER  = '#1e2a3a'
+        C_HEAD_FG = '#ffffff'
+        C_BADGE   = '#343a40'
+        C_BADGE_FG= '#ffffff'
+        C_SPINE   = '#adb5bd'
+        C_TITLE   = '#212529'
+        C_CONTENT = '#495057'
+        C_FOOTER  = '#868e96'
+        C_DEFAULT = '#4361ee'
+
+        # ── fonts ─────────────────────────────────────────────────────────
+        try:
+            f_head   = ImageFont.truetype(FONT_BOLD, 34)
+            f_badge  = ImageFont.truetype(FONT_BOLD, 22)
+            f_title  = ImageFont.truetype(FONT_BOLD, 24)
+            f_time   = ImageFont.truetype(FONT_BOLD, 18)
+            f_body   = ImageFont.truetype(FONT, 18)
+            f_footer = ImageFont.truetype(FONT, 16)
+        except Exception:
+            f_head = f_badge = f_title = f_time = f_body = f_footer = \
+                ImageFont.load_default()
+
+        # helper: pixel width of text with a given font
+        def _tw(font, text):
+            try:
+                return int(font.getlength(text))
+            except AttributeError:
+                return font.getsize(text)[0]
+
+        # helper: word-wrap text to fit inside max_px pixels
+        def _wrap(text, font, max_px):
+            words = text.split()
+            lines, curr = [], []
+            for w in words:
+                probe = ' '.join(curr + [w])
+                if _tw(font, probe) <= max_px:
+                    curr.append(w)
+                else:
+                    if curr:
+                        lines.append(' '.join(curr))
+                    curr = [w]
+                    if len(lines) >= MAX_CONTENT_LINES:
+                        break
+            if curr and len(lines) < MAX_CONTENT_LINES:
+                lines.append(' '.join(curr))
+            return lines
+
+        # ── sort & group by day ───────────────────────────────────────────
+        events = sorted(
+            [e for e in timeline_events if e.get('event_date')],
+            key=lambda e: e['event_date']
+        )
+        if not events:
+            return None
+
+        groups = OrderedDict()
+        for ev in events:
+            d = ev['event_date']
+            k = d.strftime('%Y-%m-%d') if hasattr(d, 'strftime') else str(d)[:10]
+            groups.setdefault(k, []).append(ev)
+
+        # ── precompute content lines & card heights ───────────────────────
+        text_area_w = CARD_W - TEXT_PAD - 20
+        ev_content_lines = {}
+        ev_card_h = {}
+        for ev in events:
+            raw = str(ev.get('event_content') or '').replace('\n', ' ').strip()
+            lines = _wrap(raw, f_body, text_area_w) if raw else []
+            ev_content_lines[id(ev)] = lines
+            ch = 18 + 30 + (len(lines) * LINE_H_CONTENT if lines else 0) + 20
+            ev_card_h[id(ev)] = max(86, ch)
+
+        # ── compute canvas height ─────────────────────────────────────────
+        total_h = HEADER_H + CARD_PAD
+        for day_key, day_events in groups.items():
+            total_h += BADGE_H + BADGE_MB
+            for ev in day_events:
+                total_h += ev_card_h[id(ev)] + CARD_PAD
+        total_h += FOOTER_H
+
+        # ── render ────────────────────────────────────────────────────────
+        img  = Image.new('RGB', (W, total_h), color=C_BG)
+        draw = ImageDraw.Draw(img)
+
+        # header bar (gradient simulated with two horizontal bands)
+        draw.rectangle([(0, 0), (W, HEADER_H)], fill=C_HEADER)
+        draw.rectangle([(0, HEADER_H - 4), (W, HEADER_H)], fill='#253550')
+        draw.text((W // 2, HEADER_H // 2), 'Case Timeline',
+                  fill=C_HEAD_FG, font=f_head, anchor='mm')
+
+        # vertical spine
+        draw.line([(SPINE_X, HEADER_H), (SPINE_X, total_h - FOOTER_H)],
+                  fill=C_SPINE, width=2)
+
+        y = HEADER_H + CARD_PAD
+        for day_key, day_events in groups.items():
+
+            # day badge
+            bw = _tw(f_badge, day_key) + 32
+            bx1 = SPINE_X - 12
+            draw.rectangle([(bx1, y), (bx1 + bw, y + BADGE_H)], fill=C_BADGE)
+            draw.text((bx1 + 16, y + BADGE_H // 2), day_key,
+                      fill=C_BADGE_FG, font=f_badge, anchor='lm')
+            y += BADGE_H + BADGE_MB
+
+            for ev in day_events:
+                ch     = ev_card_h[id(ev)]
+                cy     = y
+                cy_mid = cy + ch // 2
+
+                raw_color = ev.get('event_color') or C_DEFAULT
+                if not isinstance(raw_color, str) \
+                        or not raw_color.startswith('#') \
+                        or len(raw_color) not in (4, 7):
+                    raw_color = C_DEFAULT
+
+                # card shadow
+                draw.rectangle(
+                    [(CARD_X + 4, cy + 4), (CARD_X + CARD_W + 4, cy + ch + 4)],
+                    fill=C_SHADOW
+                )
+                # card body
+                draw.rectangle(
+                    [(CARD_X, cy), (CARD_X + CARD_W, cy + ch)],
+                    fill=C_CARD, outline=C_BORDER, width=1
+                )
+                # colored left accent bar (like web UI border-left)
+                draw.rectangle(
+                    [(CARD_X, cy), (CARD_X + ACCENT_W, cy + ch)],
+                    fill=raw_color
+                )
+
+                # spine dot
+                draw.ellipse(
+                    [(SPINE_X - DOT_R, cy_mid - DOT_R),
+                     (SPINE_X + DOT_R, cy_mid + DOT_R)],
+                    fill=raw_color, outline=C_BG, width=2
+                )
+                # horizontal connector: dot → card
+                draw.line(
+                    [(SPINE_X + DOT_R, cy_mid), (CARD_X, cy_mid)],
+                    fill=raw_color, width=2
+                )
+
+                # ── card text ─────────────────────────────────────────────
+                tx = CARD_X + TEXT_PAD
+                ty = cy + 16
+
+                # time pill
+                ev_date = ev.get('event_date')
+                if hasattr(ev_date, 'strftime'):
+                    time_str = ev_date.strftime('%H:%M')
+                else:
+                    time_str = str(ev_date)[11:16] if ev_date else '--:--'
+                pill_w = _tw(f_time, time_str) + 20
+                pill_h = 28
+                draw.rectangle(
+                    [(tx, ty), (tx + pill_w, ty + pill_h)],
+                    fill=raw_color
+                )
+                draw.text((tx + 10, ty + pill_h // 2), time_str,
+                          fill='#ffffff', font=f_time, anchor='lm')
+
+                # event title (right of pill)
+                title = str(ev.get('event_title') or '')[:110]
+                draw.text((tx + pill_w + 18, ty + 2), title,
+                          fill=C_TITLE, font=f_title)
+
+                # content lines
+                for li, line in enumerate(ev_content_lines[id(ev)]):
+                    draw.text(
+                        (tx, ty + pill_h + 10 + li * LINE_H_CONTENT),
+                        line, fill=C_CONTENT, font=f_body
+                    )
+
+                y += ch + CARD_PAD
+
+        # footer
+        draw.text((W // 2, total_h - FOOTER_H // 2),
+                  'Generated by IRIS',
+                  fill=C_FOOTER, font=f_footer, anchor='mm')
+
+        out_path = os.path.join(
+            output_dir, 'timeline_{}.png'.format(uuid.uuid4().hex)
+        )
+        img.save(out_path, 'PNG', dpi=(150, 150))
+        return out_path
+
+    except Exception as exc:
+        log.warning('Timeline image generation failed: %s', exc)
+        return None
 
 
 class IrisReportMaker(object):
@@ -327,6 +646,11 @@ class IrisMakeDocReport(IrisReportMaker):
                                     output_file_path
                                     )
 
+            # Post-process: inject visual timeline image into the generated DOCX
+            timeline_img = case_info.get('timeline_image', '')
+            if timeline_img and os.path.isfile(timeline_img) and doc_type == 'Investigation':
+                _inject_timeline_image_into_docx(output_file_path, timeline_img)
+
             return output_file_path, ""
 
         except rendering_error.RenderingError as e:
@@ -369,6 +693,11 @@ class IrisMakeDocReport(IrisReportMaker):
 
         # Set date
         case_info['date'] = datetime.utcnow().strftime("%Y-%m-%d")
+
+        # Generate visual timeline image and expose its path to the template
+        timeline_events = case_info.get('timeline', [])
+        img_path = _generate_timeline_image(timeline_events, self._tmp)
+        case_info['timeline_image'] = img_path or ''
 
         return case_info
 

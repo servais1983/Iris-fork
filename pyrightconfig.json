@@ -1,0 +1,6 @@
+{
+  "include": ["source"],
+  "ignore": ["source/app/alembic/versions"],
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}

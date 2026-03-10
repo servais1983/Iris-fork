@@ -609,6 +609,7 @@ body {
     -webkit-box-shadow: 4px 4px 10px rgba(69, 65, 78, 0.06);
     -moz-box-shadow: 4px 4px 10px rgba(69, 65, 78, 0.06);
     box-shadow: 4px 4px 10px rgba(69, 65, 78, 0.06);
+    transition: width 0.25s ease-in-out;
 
 }
 
@@ -1280,6 +1281,7 @@ body {
     height: 100vh;
     min-height: 100%;
     float: right;
+    transition: width 0.25s ease-in-out;
 
 }
 
@@ -1695,27 +1697,31 @@ body {
     .sidebar_minimize .sidebar:hover .sidebar-wrapper .nav-section .text-section {
         display: block;
     }
+    /* On hover the sidebar expands as a pure overlay — nothing else moves */
+    .sidebar_minimize.sidebar_minimize_hover .sidebar {
+        z-index: 1002; /* above nav-sticky (1000) and main-header (1001 but covers y=0-62px which sidebar doesn't occupy) */
+    }
     .sidebar_minimize.sidebar_minimize_hover .logo-header {
-        width: 250px;
-        padding-left: 25px;
-        padding-right: 25px;
-        text-align: left;
+        width: 75px;
+        padding: 0px;
+        text-align: center;
     }
     .sidebar_minimize.sidebar_minimize_hover .logo-header .logo {
-        opacity: 1 !important;
-        transform: translate3d(0, 0, 0) !important;
-        position: relative !important;
+        opacity: 0 !important;
+        transform: translate3d(25px, 0, 0) !important;
+        position: absolute !important;
     }
     .sidebar_minimize.sidebar_minimize_hover .logo-header .logo img {
-        display: inline-block !important;
+        display: none !important;
     }
     .sidebar_minimize.sidebar_minimize_hover .main-panel {
-        width: calc(100% - 250px);
+        width: calc(100% - 75px);
     }
     .sidebar_minimize_hover .logo-header .nav-toggle {
-        right: 18px !important;
-        transform: translateX(0%) !important;
-        left: unset;
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        height: 100%;
     }
 }
 

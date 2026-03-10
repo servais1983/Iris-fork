@@ -1,6 +1,6 @@
 azure-identity==1.10.0
 azure-keyvault-secrets==4.5.1
-celery==5.2.7
+celery==5.3.6
 Flask==2.3.2
 Flask-Bcrypt==1.0.1
 Flask-Login==0.6.2

@@ -32,6 +32,9 @@ COPY source/requirements.txt /
 
 RUN pip3 install -r requirements.txt
 
+# Patch iris_vt_module to handle response_code=0 (VT no-data) gracefully
+RUN cp /dependencies/vt_handler_patched.py /opt/venv/lib/python3.9/site-packages/iris_vt_module/vt_handler/vt_handler.py
+
 ###############
 # BUILD IMAGE #
 ###############
@@ -63,6 +66,9 @@ WORKDIR /iriswebapp
 COPY docker/webApp/iris-entrypoint.sh .
 COPY docker/webApp/wait-for-iriswebapp.sh .
 COPY ./source .
+
+# Fix CRLF line endings (Windows checkout) so bash scripts run properly on Linux
+RUN sed -i 's/\r//' iris-entrypoint.sh wait-for-iriswebapp.sh
 
 # Add execution right to binaries needed by evtx2splunk for iris_evtx module
 RUN chmod +x /iriswebapp/dependencies/evtxdump_binaries/linux/x64/fd

@@ -73,6 +73,7 @@ from app.models.models import create_safe_attr
 from app.models.models import get_by_value_or_create
 from app.models.models import get_or_create
 from app.iris_engine.demo_builder import create_demo_users
+from app.datamgmt.mitre.mitre_db import seed_mitre_attack
 
 log = app.logger
 
@@ -153,9 +154,15 @@ def run_post_init(development=False):
 
             log.info("Running DB migration")
 
-            alembic_cfg = Config(file_='app/alembic.ini')
-            alembic_cfg.set_main_option('sqlalchemy.url', app.config['SQLALCHEMY_DATABASE_URI'])
-            command.upgrade(alembic_cfg, 'head')
+            try:
+                alembic_cfg = Config(file_='app/alembic.ini')
+                alembic_cfg.set_main_option('sqlalchemy.url', app.config['SQLALCHEMY_DATABASE_URI'])
+                command.upgrade(alembic_cfg, 'head')
+            except Exception as e:
+                log.warning(
+                    "Alembic migration failed (likely version mismatch on existing DB) — "
+                    "tables were already created by db.create_all(). Error: %s", e
+                )
 
             # Create base server settings if they don't exist
             srv_settings = ServerSettings.query.first()
@@ -225,6 +232,9 @@ def run_post_init(development=False):
 
             log.info("Creating base hooks")
             create_safe_hooks()
+
+            log.info("Seeding MITRE ATT&CK data")
+            seed_mitre_attack(db.session)
 
             # Create initial authorization model, administrative user, and customer
             log.info("Creating initial authorisation model")
@@ -1071,8 +1081,13 @@ def create_safe_admin(def_org, gadm):
         db.session.commit()
 
     else:
-        if not os.environ.get('IRIS_ADM_PASSWORD'):
-            # Prevent leak of user set password in logs
+        adm_password = app.config.get('IRIS_ADM_PASSWORD')
+        if adm_password:
+            # Update the password if IRIS_ADM_PASSWORD is explicitly set
+            user.password = bc.generate_password_hash(adm_password.encode('utf8')).decode('utf8')
+            db.session.commit()
+            log.warning(">>> Administrator password updated from IRIS_ADM_PASSWORD config")
+        else:
             log.warning(">>> Administrator already exists")
 
         if user.email != admin_email:
@@ -1694,7 +1709,7 @@ def register_modules_pipelines():
 
 def register_default_modules():
     modules = ['iris_vt_module', 'iris_misp_module', 'iris_check_module',
-               'iris_webhooks_module', 'iris_intelowl_module']
+               'iris_webhooks_module', 'iris_intelowl_module', 'iris_mitre_module']
 
     for module_name in modules:
         class_, _ = instantiate_module_from_name(module_name)

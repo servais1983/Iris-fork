@@ -27,7 +27,7 @@ from app import db
 from app.datamgmt.context.context_db import ctx_search_user_cases
 from app.models.authorization import Permissions
 from app.models.cases import Cases
-from app.models.models import Client
+from app.models.models import Client, IrisModule
 from app.util import ac_api_requires
 from app.util import not_authenticated_redirection_url
 from app.util import response_success
@@ -63,10 +63,13 @@ def set_ctx():
 
 @app.context_processor
 def iris_version():
+    mitre_mod = IrisModule.query.filter_by(module_name='iris_mitre_module').first()
+    mitre_active = mitre_mod.is_active if mitre_mod else False
     return dict(iris_version=app.config.get('IRIS_VERSION'),
                 organisation_name=app.config.get('ORGANISATION_NAME'),
                 std_permissions=Permissions,
-                demo_domain=app.config.get('DEMO_DOMAIN', None))
+                demo_domain=app.config.get('DEMO_DOMAIN', None),
+                mitre_module_active=mitre_active)
 
 
 @app.context_processor

@@ -1,4 +1,3 @@
-
 <p align="center">
     <img src="source/app/static/assets/img/logo.ico" />
 </p>

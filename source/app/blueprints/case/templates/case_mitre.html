@@ -1,0 +1,467 @@
+{% extends "layouts/default_ext.html" %}
+{% block title %} MITRE ATT&CK Matrix {% endblock %}
+
+{% block stylesheets %}
+{% include 'includes/header_case.html' %}
+<style>
+  .mitre-matrix-container {
+    overflow: auto;
+    height: calc(100vh - 230px);
+    border: 1px solid #2a3a4a;
+    border-radius: 4px;
+  }
+  /* Scrollbar toujours visible et stylisée */
+  .mitre-matrix-container::-webkit-scrollbar { width: 8px; height: 8px; }
+  .mitre-matrix-container::-webkit-scrollbar-track { background: #1a2535; }
+  .mitre-matrix-container::-webkit-scrollbar-thumb { background: #3a5a7a; border-radius: 4px; }
+  .mitre-matrix-container::-webkit-scrollbar-thumb:hover { background: #4a8fcb; }
+  .mitre-matrix-container::-webkit-scrollbar-corner { background: #1a2535; }
+
+  /* En-têtes de tactiques collants en haut */
+  .mitre-tactic-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #1a2e45;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 8px;
+    border-radius: 4px 4px 0 0;
+    text-align: center;
+    cursor: default;
+  }
+  .mitre-matrix { display: flex; gap: 6px; min-width: max-content; padding: 4px; }
+  .mitre-tactic-col { min-width: 160px; max-width: 160px; }
+  .mitre-tactic-header small { display: block; color: #90b4d6; font-size: 9px; }
+  .mitre-technique-cell {
+    font-size: 10px;
+    padding: 4px 6px;
+    margin-top: 2px;
+    border-radius: 3px;
+    cursor: pointer;
+    background: #2c3e50;
+    color: #cdd9e5;
+    transition: background 0.15s;
+    border: 1px solid transparent;
+  }
+  .mitre-technique-cell:hover { background: #3a5269; border-color: #4a8fcb; }
+  .mitre-technique-cell.active {
+    background: #1f6b3a !important;
+    color: #b6ffce !important;
+    border-color: #26a65b;
+  }
+  .mitre-technique-cell.has-sub { background: #253545; }
+  .mitre-sub-cell {
+    font-size: 9.5px;
+    padding: 3px 5px 3px 14px;
+    margin-top: 1px;
+    border-radius: 2px;
+    cursor: pointer;
+    background: #202f3d;
+    color: #b0c4d8;
+    border: 1px solid transparent;
+    transition: background 0.15s;
+  }
+  .mitre-sub-cell:hover { background: #304558; border-color: #4a8fcb; }
+  .mitre-sub-cell.active {
+    background: #185030 !important;
+    color: #b6ffce !important;
+    border-color: #26a65b;
+  }
+  .mitre-search-bar { max-width: 400px; }
+  .mitre-legend { font-size: 11px; }
+  #mitre-search-results .result-item {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-bottom: 1px solid #2a3a4a;
+    font-size: 12px;
+  }
+  #mitre-search-results .result-item:hover { background: #2c404f; }
+  #mitre-search-results .result-item .badge { font-size: 9px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{{ form.hidden_tag() }}
+{% include 'includes/navigation_ext.html' %}
+{% include 'includes/sidenav.html' %}
+
+<div class="main-panel">
+  <div class="content">
+    {% if current_user.is_authenticated %}
+
+    <nav class="navbar navbar-header navbar-expand-lg pt-2 pb-2 bg-case-gradient nav-sticky">
+      <div class="container-fluid">
+        <ul class="navbar-nav topbar-nav ml-md-auto align-items-center page-navigation page-navigation-style-2 page-navigation-secondary">
+          <li class="nav-item ml-2">
+            <span class="text-white text-sm mr-2" id="last_refresh"></span>
+          </li>
+          <li class="nav-item">
+            <button class="btn btn-primary btn-sm" onclick="loadMatrix();">
+              <span class="menu-title"><i class="fas fa-sync-alt mr-1"></i>Refresh</span>
+            </button>
+          </li>
+          {% if user_has_perm(std_permissions.server_administrator) %}
+          <li class="nav-item ml-2">
+            <button class="btn btn-warning btn-sm" id="btn-mitre-update" onclick="mitreAdminUpdate();"
+                    title="Re-download the latest ATT&CK bundle from MITRE and update the database">
+              <span class="menu-title"><i class="fas fa-cloud-download-alt mr-1"></i>Update ATT&CK</span>
+            </button>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </nav>
+
+    <div class="page-inner mt-2">
+
+      <!-- Search bar -->
+      <div class="row mb-3">
+        <div class="col-md-6 mitre-search-bar">
+          <div class="input-group input-group-sm">
+            <input type="text" id="mitre-search" class="form-control"
+                   placeholder="Search techniques (e.g. T1059, PowerShell)…" autocomplete="off">
+            <div class="input-group-append">
+              <button class="btn btn-outline-secondary" onclick="searchTechniques()">
+                <i class="fas fa-search"></i>
+              </button>
+            </div>
+          </div>
+          <div id="mitre-search-results" class="bg-white border rounded mt-1 shadow-sm"
+               style="display:none; position:absolute; z-index:1000; min-width:360px; max-height:260px; overflow-y:auto;"></div>
+        </div>
+        <div class="col-md-6 d-flex align-items-center mitre-legend">
+          <span class="badge badge-success mr-2">&nbsp;&nbsp;</span> Linked to case
+        </div>
+      </div>
+
+      <!-- Matrix -->
+      <div class="mitre-matrix-container">
+        <div class="mitre-matrix" id="mitre-matrix">
+          <div class="text-center text-muted mt-4 w-100" id="matrix-loading">
+            <i class="fas fa-spinner fa-spin fa-2x"></i><br>Loading ATT&CK matrix…
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /page-inner -->
+    {% endif %}
+  </div>
+</div>
+
+<!-- Technique detail modal -->
+<div class="modal fade" id="modal_mitre_detail" tabindex="-1" role="dialog">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modal_mitre_title"></h5>
+        <button type="button" class="close" data-dismiss="modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>
+          <strong id="modal_mitre_id_label"></strong>
+          <span id="modal_mitre_url_block" style="display:none; margin-left:8px;">
+            &mdash; <a id="modal_mitre_url" href="#" target="_blank" rel="noopener">
+              <i class="fas fa-external-link-alt fa-xs"></i> ATT&amp;CK
+            </a>
+          </span>
+        </p>
+        <p class="text-muted small" id="modal_mitre_desc"></p>
+        <p><strong>Tactics:</strong> <span id="modal_mitre_tactics"></span></p>
+        <p id="modal_mitre_parent_block" style="display:none;" class="small">
+          <strong>Parent technique:</strong> <span id="modal_mitre_parent"></span>
+        </p>
+        <p id="modal_mitre_subs_block" style="display:none;" class="small">
+          <strong>Sub-techniques:</strong> <span id="modal_mitre_subs"></span>
+        </p>
+        <hr>
+        <p id="modal_already_linked" class="text-success" style="display:none">
+          <i class="fas fa-check-circle"></i> Technique already linked to this case.
+        </p>
+        <input type="hidden" id="modal_technique_id">
+        <input type="hidden" id="modal_assoc_id">
+        <div id="modal_note_block">
+          <label class="small">Note (optional)</label>
+          <textarea id="modal_note" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-danger btn-sm" id="btn_unlink_technique"
+                onclick="unlinkTechnique()" style="display:none">
+          <i class="fas fa-unlink mr-1"></i>Unlink from case
+        </button>
+        <button type="button" class="btn btn-success btn-sm" id="btn_link_technique"
+                onclick="linkTechnique()">
+          <i class="fas fa-link mr-1"></i>Link to case
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="mitre-config"
+     data-caseid="{{ caseid }}"
+     data-linked-ids="{{ case_technique_ids | list | tojson | e }}"
+     style="display:none;"></div>
+{% endblock content %}
+{% block javascripts %}
+{% include 'includes/footer_case.html' %}
+<script>
+function getCsrfToken() { return $('#csrf_token').val(); }
+
+const CASEID = parseInt(document.getElementById('mitre-config').dataset.caseid, 10);
+let caseLinkedIds = new Set(JSON.parse(document.getElementById('mitre-config').dataset.linkedIds));
+let assocMap = {};   // technique_id -> assoc row id (for unlink)
+let fullMatrix = [];
+
+// ------------------------------------------------------------------
+// Bootstrap: load matrix + assoc map
+// ------------------------------------------------------------------
+$(document).ready(function () {
+    loadMatrix();
+    loadCaseAssociations();
+
+    $('#mitre-search').on('keyup', function (e) {
+        if (e.key === 'Enter') searchTechniques();
+        if (this.value.trim() === '') $('#mitre-search-results').hide();
+    });
+
+    $(document).on('click', function (e) {
+        if (!$(e.target).closest('#mitre-search, #mitre-search-results').length) {
+            $('#mitre-search-results').hide();
+        }
+    });
+});
+
+function loadCaseAssociations() {
+    $.get('/case/mitre/list?cid=' + CASEID, function (data) {
+        if (data.status === 'success') {
+            caseLinkedIds = new Set();
+            assocMap = {};
+            data.data.forEach(function (row) {
+                caseLinkedIds.add(row.technique_id);
+                assocMap[row.technique_id] = row.id;
+            });
+            refreshCells();
+        }
+    });
+}
+
+function loadMatrix() {
+    $('#matrix-loading').show();
+    $.get('/mitre/matrix', function (data) {
+        if (data.status !== 'success') { return; }
+        fullMatrix = data.data;
+        renderMatrix(fullMatrix);
+    }).always(function () {
+        $('#matrix-loading').hide();
+        $('#last_refresh').text('Last refresh: ' + new Date().toLocaleTimeString());
+    });
+}
+
+function renderMatrix(tactics) {
+    const container = $('#mitre-matrix');
+    container.empty();
+    tactics.forEach(function (tac) {
+        const col = $('<div class="mitre-tactic-col"></div>');
+        col.append(
+            $('<div class="mitre-tactic-header"></div>').html(
+                tac.name + '<small>' + tac.mitre_id + '</small>'
+            )
+        );
+        tac.techniques.forEach(function (tech) {
+            const hasSubs = tech.subtechniques && tech.subtechniques.length > 0;
+            const cell = buildCell(tech.id, tech.mitre_id, tech.name, hasSubs ? 'mitre-technique-cell has-sub' : 'mitre-technique-cell');
+            col.append(cell);
+            if (hasSubs) {
+                tech.subtechniques.forEach(function (sub) {
+                    col.append(buildCell(sub.id, sub.mitre_id, sub.name, 'mitre-sub-cell'));
+                });
+            }
+        });
+        container.append(col);
+    });
+    refreshCells();
+}
+
+function buildCell(techId, mitreId, name, cls) {
+    return $('<div></div>')
+        .addClass(cls)
+        .attr('data-tech-id', techId)
+        .attr('id', 'tc_' + techId)
+        .attr('title', mitreId + ' – ' + name)
+        .text(name.length > 22 ? name.substring(0, 20) + '…' : name)
+        .on('click', function () { openTechniqueModal(techId, mitreId, name); });
+}
+
+function refreshCells() {
+    $('.mitre-technique-cell, .mitre-sub-cell').each(function () {
+        const tid = parseInt($(this).attr('data-tech-id'));
+        if (caseLinkedIds.has(tid)) {
+            $(this).addClass('active');
+        } else {
+            $(this).removeClass('active');
+        }
+    });
+}
+
+// ------------------------------------------------------------------
+// Modal
+// ------------------------------------------------------------------
+function openTechniqueModal(techId, mitreId, name) {
+    $('#modal_technique_id').val(techId);
+    $('#modal_mitre_title').text(name);
+    $('#modal_mitre_id_label').text(mitreId);
+    $('#modal_mitre_desc').html('<i class="fas fa-spinner fa-spin text-muted"></i>');
+    $('#modal_mitre_tactics').text('…');
+    $('#modal_mitre_url_block').hide();
+    $('#modal_mitre_parent_block').hide();
+    $('#modal_mitre_subs_block').hide();
+
+    const linked = caseLinkedIds.has(techId);
+    $('#modal_already_linked').toggle(linked);
+    $('#btn_link_technique').toggle(!linked);
+    $('#btn_unlink_technique').toggle(linked);
+    $('#modal_assoc_id').val(assocMap[techId] || '');
+    $('#modal_note').val('');
+
+    $.get('/mitre/technique/' + techId, function (data) {
+        if (data.status !== 'success') {
+            $('#modal_mitre_desc').text('');
+            return;
+        }
+        const t = data.data;
+        $('#modal_mitre_desc').text(t.description || 'No description available.');
+        $('#modal_mitre_tactics').text(
+            t.tactics.map(function (x) { return x.name; }).join(', ') || '—'
+        );
+        if (t.url) {
+            $('#modal_mitre_url').attr('href', t.url);
+            $('#modal_mitre_url_block').show();
+        }
+        if (t.parent) {
+            $('#modal_mitre_parent').text(t.parent.mitre_id + ' – ' + t.parent.name);
+            $('#modal_mitre_parent_block').show();
+        }
+        if (t.subtechniques && t.subtechniques.length > 0) {
+            $('#modal_mitre_subs').html(
+                t.subtechniques.map(function (s) { return s.mitre_id + ' ' + s.name; }).join(', ')
+            );
+            $('#modal_mitre_subs_block').show();
+        }
+    }).fail(function () {
+        $('#modal_mitre_desc').text('');
+    });
+
+    $('#modal_mitre_detail').modal('show');
+}
+
+function linkTechnique() {
+    const techId = parseInt($('#modal_technique_id').val());
+    const note = $('#modal_note').val();
+    $.post({
+        url: '/case/mitre/add?cid=' + CASEID,
+        contentType: 'application/json',
+        data: JSON.stringify({ technique_id: techId, note: note, csrf_token: getCsrfToken() }),
+        success: function (data) {
+            if (data.status === 'success') {
+                caseLinkedIds.add(techId);
+                assocMap[techId] = data.data.id;
+                refreshCells();
+                notify_success('Technique linked to case.');
+                $('#modal_mitre_detail').modal('hide');
+            } else {
+                notify_error(data.message);
+            }
+        },
+        error: function (xhr) {
+            notify_error('Error: ' + (xhr.responseJSON ? xhr.responseJSON.message : xhr.statusText));
+        }
+    });
+}
+
+function unlinkTechnique() {
+    const techId = parseInt($('#modal_technique_id').val());
+    const assocId = $('#modal_assoc_id').val();
+    $.post({
+        url: '/case/mitre/delete/' + assocId + '?cid=' + CASEID,
+        contentType: 'application/json',
+        data: JSON.stringify({ csrf_token: getCsrfToken() }),
+        success: function (data) {
+            if (data.status === 'success') {
+                caseLinkedIds.delete(techId);
+                delete assocMap[techId];
+                refreshCells();
+                notify_success('Technique unlinked.');
+                $('#modal_mitre_detail').modal('hide');
+            } else {
+                notify_error(data.message);
+            }
+        },
+        error: function (xhr) {
+            notify_error('Error: ' + (xhr.responseJSON ? xhr.responseJSON.message : xhr.statusText));
+        }
+    });
+}
+
+// ------------------------------------------------------------------
+// Search
+// ------------------------------------------------------------------
+function searchTechniques() {
+    const q = $('#mitre-search').val().trim();
+    if (!q) return;
+    $.get('/mitre/techniques/search?q=' + encodeURIComponent(q), function (data) {
+        if (data.status !== 'success') return;
+        const results = data.data;
+        const container = $('#mitre-search-results');
+        container.empty();
+        if (results.length === 0) {
+            container.append('<div class="result-item text-muted">No results found.</div>');
+        } else {
+            results.forEach(function (t) {
+                const item = $('<div class="result-item"></div>');
+                const linked = caseLinkedIds.has(t.id) ? '<span class="badge badge-success ml-1">linked</span>' : '';
+                item.html('<strong>' + t.mitre_id + '</strong> ' + t.name + linked +
+                    ' <span class="text-muted">(' + t.tactics.join(', ') + ')</span>');
+                item.on('click', function () {
+                    container.hide();
+                    openTechniqueModal(t.id, t.mitre_id, t.name);
+                });
+                container.append(item);
+            });
+        }
+        container.show();
+    });
+}
+
+function mitreAdminUpdate() {
+    if (!confirm('Re-download the latest MITRE ATT&CK bundle and update the database?\n\nExisting case/asset/IOC/event associations are preserved.\nThe operation may take 30–60 seconds.')) return;
+
+    var btn = $('#btn-mitre-update');
+    btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin mr-1"></i>Updating…');
+
+    $.ajax({
+        url: '/mitre/admin/update',
+        method: 'POST',
+        data: { csrf_token: getCsrfToken() },
+        success: function(resp) {
+            if (resp.status === 'success') {
+                notify_success(resp.message || 'ATT&CK updated');
+                loadMatrix();
+            } else {
+                notify_error(resp.message || 'Update failed');
+            }
+        },
+        error: function(xhr) {
+            var msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Update request failed';
+            notify_error(msg);
+        },
+        complete: function() {
+            btn.prop('disabled', false).html('<i class="fas fa-cloud-download-alt mr-1"></i>Update ATT&CK');
+        }
+    });
+}
+</script>
+{% endblock javascripts %}

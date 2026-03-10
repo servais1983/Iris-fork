@@ -2,7 +2,6 @@
 var g_ioc_id = null;
 var g_ioc_desc_editor = null;
 
-
 function reload_iocs() {
     get_case_ioc();
 }
