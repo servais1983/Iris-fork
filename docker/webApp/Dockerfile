@@ -70,6 +70,9 @@ COPY ./source .
 # Fix CRLF line endings (Windows checkout) so bash scripts run properly on Linux
 RUN sed -i 's/\r//' iris-entrypoint.sh wait-for-iriswebapp.sh
 
+# Patch iris_vt_module with custom version
+RUN cp -r /iriswebapp/dependencies/iris_vt_patched/iris_vt_module /opt/venv/lib/python3.9/site-packages/iris_vt_module
+
 # Add execution right to binaries needed by evtx2splunk for iris_evtx module
 RUN chmod +x /iriswebapp/dependencies/evtxdump_binaries/linux/x64/fd
 RUN chmod +x /iriswebapp/dependencies/evtxdump_binaries/linux/x64/evtx_dump
