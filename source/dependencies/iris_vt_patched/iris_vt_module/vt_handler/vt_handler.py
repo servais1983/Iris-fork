@@ -47,10 +47,10 @@ class VtHandler(object):
         proxies = {}
 
         if self.server_config.get('http_proxy'):
-            proxies['https'] = self.server_config.get('HTTPS_PROXY')
+            proxies['http'] = self.server_config.get('http_proxy')
 
         if self.server_config.get('https_proxy'):
-            proxies['http'] = self.server_config.get('HTTP_PROXY')
+            proxies['https'] = self.server_config.get('https_proxy')
 
         if is_premium:
             return PrivateApi(api_key, proxies=proxies)
